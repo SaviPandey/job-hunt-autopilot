@@ -1,0 +1,86 @@
+id: job-hunter-tracker
+namespace: job.hunter
+description: "Tracks applications via webhook, stores in PostgreSQL, sends confirmation"
+
+tasks:
+  - id: log_received
+    type: io.kestra.plugin.core.log.Log
+    message: "📝 Application tracked: {{ trigger.body.job_title }} at {{ trigger.body.company }}"
+
+  - id: store_application
+    type: io.kestra.plugin.jdbc.postgresql.Queries
+    url: jdbc:postgresql://postgres:5432/kestra
+    username: kestra
+    password: k3str4
+    sql: |
+      CREATE TABLE IF NOT EXISTS jh_applications (
+        id SERIAL PRIMARY KEY,
+        applied_at TIMESTAMP DEFAULT NOW(),
+        job_title TEXT,
+        company TEXT,
+        job_url TEXT,
+        status TEXT DEFAULT 'applied',
+        followup_sent BOOLEAN DEFAULT FALSE
+      );
+      INSERT INTO jh_applications (job_title, company, job_url)
+      VALUES (
+        '{{ trigger.body.job_title | replace("'", "''") }}',
+        '{{ trigger.body.company | replace("'", "''") }}',
+        '{{ trigger.body.url | default("") }}'
+      );
+
+  - id: send_confirmation
+    type: io.kestra.plugin.notifications.mail.MailSend
+    from: warrior8108@gmail.com
+    to: warrior8108@gmail.com
+    subject: "Application Tracked: {{ trigger.body.job_title }}"
+    htmlTextContent: |
+      <!DOCTYPE html><html><body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="padding:32px 16px;">
+      <tr><td align="center"><table width="520" cellpadding="0" cellspacing="0">
+      <tr><td style="background:linear-gradient(135deg,#064e3b,#065f46);border-radius:16px 16px 0 0;padding:32px;">
+        <p style="margin:0 0 6px;font-size:11px;font-weight:700;letter-spacing:0.1em;color:rgba(255,255,255,0.5);text-transform:uppercase;">Application Logged</p>
+        <h1 style="margin:0;font-size:24px;font-weight:800;color:white;">Tracked Successfully</h1>
+      </td></tr>
+      <tr><td style="background:white;padding:28px 32px;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          <tr><td style="padding:10px 0;border-bottom:1px solid #f3f4f6;">
+            <p style="margin:0;font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.06em;font-weight:600;">Role</p>
+            <p style="margin:4px 0 0;font-size:16px;font-weight:700;color:#111827;">{{ trigger.body.job_title }}</p>
+          </td></tr>
+          <tr><td style="padding:10px 0;border-bottom:1px solid #f3f4f6;">
+            <p style="margin:0;font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.06em;font-weight:600;">Company</p>
+            <p style="margin:4px 0 0;font-size:16px;font-weight:700;color:#111827;">{{ trigger.body.company }}</p>
+          </td></tr>
+          <tr><td style="padding:10px 0;border-bottom:1px solid #f3f4f6;">
+            <p style="margin:0;font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.06em;font-weight:600;">Applied</p>
+            <p style="margin:4px 0 0;font-size:15px;color:#374151;">{{ now() | date('dd MMM yyyy, HH:mm') }} IST</p>
+          </td></tr>
+          <tr><td style="padding:10px 0;">
+            <p style="margin:0;font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.06em;font-weight:600;">Stored in</p>
+            <p style="margin:4px 0 0;font-size:15px;color:#374151;">PostgreSQL &nbsp;&#183;&nbsp; jh_applications table</p>
+          </td></tr>
+        </table>
+        <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:16px;margin-top:20px;">
+          <p style="margin:0 0 8px;font-size:13px;font-weight:700;color:#166534;">Auto-reminders scheduled</p>
+          <p style="margin:0;font-size:13px;color:#15803d;">Day 7 follow-up &middot; Day 14 ghosted check</p>
+        </div>
+      </td></tr>
+      <tr><td style="background:#f9fafb;border-top:1px solid #e5e7eb;border-radius:0 0 16px 16px;padding:16px 32px;text-align:center;">
+        <p style="margin:0;font-size:12px;color:#9ca3af;">JobHunter &middot; Powered by Kestra &middot; Data stored in PostgreSQL</p>
+      </td></tr>
+      </table></td></tr></table>
+      </body></html>
+    host: smtp.gmail.com
+    port: 465
+    username: warrior8108@gmail.com
+    password: pvhtnrizcfzvbwrw
+
+  - id: log_done
+    type: io.kestra.plugin.core.log.Log
+    message: "✅ Application stored in DB + confirmation sent"
+
+triggers:
+  - id: application_webhook
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: job-application-tracker-2026

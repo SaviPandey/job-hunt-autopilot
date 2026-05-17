@@ -1,0 +1,16 @@
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Kestra specifics (if any local executions are stored)
+.kestra/

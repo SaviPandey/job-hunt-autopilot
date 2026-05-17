@@ -1,0 +1,74 @@
+id: job-hunter-followup
+namespace: job.hunter
+description: "Weekly follow-up reminders every Monday + DB status update"
+
+tasks:
+  - id: log_followup_start
+    type: io.kestra.plugin.core.log.Log
+    message: "⏰ Running weekly follow-up check..."
+
+  - id: check_pending_applications
+    type: io.kestra.plugin.jdbc.postgresql.Query
+    url: jdbc:postgresql://postgres:5432/kestra
+    username: kestra
+    password: k3str4
+    sql: |
+      UPDATE jh_applications
+      SET followup_sent = TRUE
+      WHERE followup_sent = FALSE
+      AND applied_at < NOW() - INTERVAL '7 days'
+      AND status = 'applied';
+
+  - id: send_followup_reminder
+    type: io.kestra.plugin.notifications.mail.MailSend
+    from: warrior8108@gmail.com
+    to: warrior8108@gmail.com
+    subject: "Weekly Follow-up Reminder — {{ now() | date('dd MMM yyyy') }}"
+    htmlTextContent: |
+      <!DOCTYPE html><html><body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="padding:32px 16px;">
+      <tr><td align="center"><table width="560" cellpadding="0" cellspacing="0">
+
+      <tr><td style="background:linear-gradient(135deg,#78350f,#92400e,#b45309);border-radius:16px 16px 0 0;padding:32px;">
+        <p style="margin:0 0 6px;font-size:11px;font-weight:700;letter-spacing:0.1em;color:rgba(255,255,255,0.5);text-transform:uppercase;">Weekly Action</p>
+        <h1 style="margin:0 0 8px;font-size:26px;font-weight:800;color:white;letter-spacing:-0.02em;">Time to Follow Up</h1>
+        <p style="margin:0;font-size:14px;color:rgba(255,255,255,0.7);">Your pending applications from last week need attention.</p>
+      </td></tr>
+
+      <tr><td style="background:white;padding:28px 32px;">
+        <p style="margin:0 0 16px;font-size:13px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:0.06em;">Follow-up Template</p>
+        <div style="background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;padding:20px;font-size:14px;color:#374151;line-height:1.8;">
+          <p style="margin:0 0 8px;"><strong>Subject:</strong> Following Up — [Job Title] Application</p>
+          <p style="margin:0 0 12px;border-bottom:1px solid #f3f4f6;padding-bottom:12px;">Hi [Hiring Manager],</p>
+          <p style="margin:0 0 12px;">I wanted to follow up on my application for <strong>[Job Title]</strong> submitted last week. I remain very excited about the opportunity and would love to discuss how my experience in Python, MLOps, and Kubernetes aligns with your team's goals.</p>
+          <p style="margin:0 0 12px;">Happy to jump on a 20-minute call at your convenience.</p>
+          <p style="margin:0;">Best regards,<br><strong>Savinay Pandey</strong><br>
+          <span style="color:#7c6fe0;">savinaypandey123@gmail.com</span> &middot; github/SaviPandey</p>
+        </div>
+
+        <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:16px;margin-top:20px;">
+          <p style="margin:0 0 6px;font-size:13px;font-weight:700;color:#1e40af;">DB Status Updated</p>
+          <p style="margin:0;font-size:13px;color:#1d4ed8;">Applications older than 7 days marked as followup_sent in PostgreSQL</p>
+        </div>
+      </td></tr>
+
+      <tr><td style="background:#f9fafb;border-top:1px solid #e5e7eb;border-radius:0 0 16px 16px;padding:16px 32px;text-align:center;">
+        <p style="margin:0;font-size:12px;color:#9ca3af;">JobHunter &middot; Weekly Automation &middot; {{ now() | date('dd MMM yyyy') }}</p>
+      </td></tr>
+
+      </table></td></tr></table>
+      </body></html>
+    host: smtp.gmail.com
+    port: 465
+    username: warrior8108@gmail.com
+    password: pvhtnrizcfzvbwrw
+
+  - id: log_followup_done
+    type: io.kestra.plugin.core.log.Log
+    message: "✅ Follow-up sent + DB updated"
+
+triggers:
+  - id: every_monday
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 10 * * 1"
+    timezone: Asia/Kolkata
