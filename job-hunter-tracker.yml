@@ -74,7 +74,7 @@ tasks:
     host: smtp.gmail.com
     port: 465
     username: warrior8108@gmail.com
-    password: pvhtnrizcfzvbwrw
+    password: "{{ secret('GMAIL_APP_PASSWORD') }}"
 
   - id: log_done
     type: io.kestra.plugin.core.log.Log
