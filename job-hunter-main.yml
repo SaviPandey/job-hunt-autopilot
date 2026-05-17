@@ -1,0 +1,490 @@
+id: job-hunter-main
+namespace: job.hunter
+description: "AI-Powered Developer Job Hunter — Full Pipeline"
+
+inputs:
+  - id: candidate_name
+    type: STRING
+    defaults: Savinay Kamlakar Pandey
+  - id: candidate_email
+    type: STRING
+    defaults: warrior8108@gmail.com
+  - id: candidate_skills
+    type: STRING
+    defaults: "Python, ML, Kubernetes, FastAPI, MLOps, Docker, PyTorch, AWS, Jenkins"
+  - id: target_roles
+    type: STRING
+    defaults: "ML Engineer, Data Scientist, Backend Developer, MLOps Engineer"
+  - id: experience_years
+    type: STRING
+    defaults: "1-3"
+
+tasks:
+  - id: pipeline_start
+    type: io.kestra.plugin.core.log.Log
+    message: "🚀 Job Hunter Pipeline Started for {{ inputs.candidate_name }}"
+
+  - id: create_tables
+    type: io.kestra.plugin.jdbc.postgresql.Queries
+    url: jdbc:postgresql://postgres:5432/kestra
+    username: kestra
+    password: k3str4
+    sql: |
+      CREATE TABLE IF NOT EXISTS jh_pipeline_runs (
+        id SERIAL PRIMARY KEY,
+        run_date TIMESTAMP DEFAULT NOW(),
+        candidate_name TEXT,
+        candidate_email TEXT,
+        jobs_fetched INTEGER,
+        top_job_title TEXT,
+        top_job_score INTEGER,
+        pipeline_status TEXT DEFAULT 'running'
+      );
+      CREATE TABLE IF NOT EXISTS jh_applications (
+        id SERIAL PRIMARY KEY,
+        applied_at TIMESTAMP DEFAULT NOW(),
+        job_title TEXT,
+        company TEXT,
+        job_url TEXT,
+        status TEXT DEFAULT 'applied',
+        followup_sent BOOLEAN DEFAULT FALSE
+      );
+
+  - id: fetch_phase
+    type: io.kestra.plugin.core.flow.Parallel
+    tasks:
+      - id: fetch_remoteok
+        type: io.kestra.plugin.core.http.Request
+        uri: "https://remoteok.com/api?tags=python,machine-learning,backend,devops,data-science"
+        method: GET
+        headers:
+          User-Agent: "Mozilla/5.0 (compatible; JobHunterBot/1.0)"
+
+      - id: fetch_arbeitnow
+        type: io.kestra.plugin.core.http.Request
+        uri: "https://www.arbeitnow.com/api/job-board-api"
+        method: GET
+
+      - id: fetch_hackernews
+        type: io.kestra.plugin.core.http.Request
+        uri: "https://hn.algolia.com/api/v1/search?query=Ask+HN+Who+is+hiring&tags=story&hitsPerPage=1"
+        method: GET
+
+  - id: merge_and_filter
+    type: io.kestra.plugin.scripts.python.Script
+    beforeCommands:
+      - pip install kestra --quiet
+    inputFiles:
+      remoteok.json: "{{ outputs.fetch_remoteok.body }}"
+      arbeitnow.json: "{{ outputs.fetch_arbeitnow.body }}"
+      hn.json: "{{ outputs.fetch_hackernews.body }}"
+    script: |
+      import json
+      from kestra import Kestra
+
+      KEYWORDS = ['python','machine learning','ml','data science','backend',
+                  'fastapi','flask','kubernetes','devops','mlops','react',
+                  'full stack','ai','deep learning','java','django',
+                  'data engineer','llm','pytorch','tensorflow','nlp']
+
+      def is_relevant(text):
+          return any(kw in text.lower() for kw in KEYWORDS)
+
+      jobs = []
+
+      try:
+          with open('remoteok.json') as f:
+              data = json.load(f)
+          if isinstance(data, list):
+              for job in data[1:30]:
+                  t = job.get('position','')
+                  d = job.get('description','')[:400]
+                  if is_relevant(t+' '+d):
+                      jobs.append(dict(
+                          title=t, company=job.get('company',''),
+                          description=d, url=job.get('url',''),
+                          tags=', '.join(job.get('tags',[])[:6]),
+                          source='RemoteOK'
+                      ))
+          print("RemoteOK: " + str(len([j for j in jobs if j['source']=='RemoteOK'])) + " jobs")
+      except Exception as e:
+          print("RemoteOK error: " + str(e))
+
+      before = len(jobs)
+      try:
+          with open('arbeitnow.json') as f:
+              data = json.load(f)
+          for job in data.get('data',[])[:30]:
+              t = job.get('title','')
+              d = job.get('description','')[:400]
+              if is_relevant(t+' '+d):
+                  jobs.append(dict(
+                      title=t, company=job.get('company_name',''),
+                      description=d,
+                      url='https://www.arbeitnow.com/jobs/'+job.get('slug',''),
+                      tags=', '.join(job.get('tags',[])[:6]),
+                      source='Arbeitnow'
+                  ))
+          print("Arbeitnow: " + str(len(jobs)-before) + " jobs")
+      except Exception as e:
+          print("Arbeitnow error: " + str(e))
+
+      try:
+          with open('hn.json') as f:
+              hn_data = json.load(f)
+          hits = hn_data.get('hits',[])
+          if hits:
+              thread_id = hits[0].get('objectID','')
+              jobs.append(dict(
+                  title='HN Who Is Hiring — Browse Now',
+                  company='Multiple Startups & Companies',
+                  description='Latest Hacker News hiring thread.',
+                  url='https://news.ycombinator.com/item?id=' + str(thread_id),
+                  tags='remote, startup, tech, hiring',
+                  source='HackerNews'
+              ))
+      except Exception as e:
+          print("HN error: " + str(e))
+
+      print("Total relevant jobs: " + str(len(jobs)))
+      Kestra.outputs(dict(jobs_json=json.dumps(jobs[:20]), count=str(len(jobs))))
+
+  - id: fetch_complete_log
+    type: io.kestra.plugin.core.log.Log
+    message: "📊 Fetched {{ outputs.merge_and_filter.vars.count }} jobs. Sending to AI..."
+
+  - id: generate_tips
+    type: io.kestra.plugin.scripts.python.Script
+    beforeCommands:
+      - pip install kestra --quiet
+    env:
+      GROQ_API_KEY: "{{ secret('GROQ_API_KEY') }}"
+    script: |
+      import json, os, urllib.request
+      from kestra import Kestra
+
+      KEY = os.environ['GROQ_API_KEY']
+
+      def groq(prompt):
+          body = json.dumps(dict(
+              model="llama3-8b-8192",
+              messages=[dict(role="user", content=prompt)],
+              max_tokens=400
+          )).encode()
+          req = urllib.request.Request(
+              "https://api.groq.com/openai/v1/chat/completions",
+              data=body,
+              headers={"Authorization": "Bearer " + KEY, "Content-Type": "application/json"}
+          )
+          with urllib.request.urlopen(req) as r:
+              return json.loads(r.read())['choices'][0]['message']['content']
+
+      tip_example = '["tip1","tip2","tip3"]'
+      prompt = (
+          "Give 3 sharp job search tips for a Python/ML/MLOps developer in 2026.\n"
+          "Each tip max 20 words. Return ONLY valid JSON array like: " + tip_example + "\n"
+          "No other text."
+      )
+
+      try:
+          raw = groq(prompt).strip().replace('```json','').replace('```','').strip()
+          tips = json.loads(raw)
+      except Exception as e:
+          print("Tips error: " + str(e))
+          tips = [
+              "Apply within 24h of posting — response rates drop 60% after that.",
+              "Lead with MLOps and Kubernetes — hottest combo in 2026.",
+              "Mention a specific project outcome with a number in your cover letter."
+          ]
+
+      Kestra.outputs(dict(tips=json.dumps(tips)))
+
+  - id: score_and_coverletter
+    type: io.kestra.plugin.scripts.python.Script
+    beforeCommands:
+      - pip install kestra --quiet
+    env:
+      GROQ_API_KEY: "{{ secret('GROQ_API_KEY') }}"
+      CANDIDATE_NAME: "{{ inputs.candidate_name }}"
+      CANDIDATE_SKILLS: "{{ inputs.candidate_skills }}"
+      TARGET_ROLES: "{{ inputs.target_roles }}"
+      EXPERIENCE: "{{ inputs.experience_years }}"
+    inputFiles:
+      jobs.json: "{{ outputs.merge_and_filter.vars.jobs_json }}"
+    script: |
+      import json, os, urllib.request, time
+      from kestra import Kestra
+
+      KEY = os.environ['GROQ_API_KEY']
+      CANDIDATE_NAME = os.environ.get('CANDIDATE_NAME', 'Candidate')
+      CANDIDATE_SKILLS = os.environ.get('CANDIDATE_SKILLS', 'Python, ML')
+      TARGET_ROLES = os.environ.get('TARGET_ROLES', 'ML Engineer')
+      EXPERIENCE = os.environ.get('EXPERIENCE', '1-3')
+
+      PROFILE = (
+          CANDIDATE_NAME + " | Experience: " + EXPERIENCE + " years. "
+          "Skills: " + CANDIDATE_SKILLS + ". "
+          "Target roles: " + TARGET_ROLES + ". "
+          "Education: BE Computer Engineering CGPA 9.91/10, Gold Medalist 2025. "
+          "LeetCode Rating 2413, Top 0.31% globally."
+      )
+
+      def groq(prompt, tokens=1500):
+          body = json.dumps(dict(
+              model="llama3-8b-8192",
+              messages=[dict(role="user", content=prompt)],
+              max_tokens=tokens
+          )).encode()
+          req = urllib.request.Request(
+              "https://api.groq.com/openai/v1/chat/completions",
+              data=body,
+              headers={"Authorization": "Bearer " + KEY, "Content-Type": "application/json"}
+          )
+          with urllib.request.urlopen(req) as r:
+              return json.loads(r.read())['choices'][0]['message']['content']
+
+      with open('jobs.json') as f:
+          jobs = json.load(f)
+
+      job_list = "\n".join([
+          str(i+1) + ". " + j['title'] + " at " + j['company'] + " | " + j['tags']
+          for i, j in enumerate(jobs)
+      ])
+
+      json_example = '[{"index":1,"score":85,"reason":"Perfect match because..."}]'
+      score_prompt = (
+          "You are a senior career advisor. Rate these jobs for this candidate.\n"
+          "CANDIDATE: " + PROFILE + "\n"
+          "JOBS:\n" + job_list + "\n"
+          "Return ONLY a JSON array like:\n" + json_example + "\n"
+          "No other text."
+      )
+
+      try:
+          raw = groq(score_prompt).strip().replace('```json','').replace('```','').strip()
+          scores = json.loads(raw)
+      except Exception as e:
+          print("Score error: " + str(e))
+          scores = [dict(index=i+1, score=60, reason="Relevant to profile") for i in range(len(jobs))]
+
+      for s in scores:
+          idx = s.get('index',1) - 1
+          if 0 <= idx < len(jobs):
+              jobs[idx]['score'] = s.get('score', 50)
+              jobs[idx]['reason'] = s.get('reason', 'Good match')
+
+      top5 = sorted(jobs, key=lambda x: x.get('score',0), reverse=True)[:5]
+
+      time.sleep(3)
+
+      try:
+          cl_prompt = (
+              "Write a compelling cover letter (max 100 words) for:\n"
+              "Role: " + top5[0]['title'] + " at " + top5[0]['company'] + "\n"
+              "Candidate: " + PROFILE + "\n"
+              "No generic openers. Start with strong hook. Be specific."
+          )
+          top5[0]['cover_letter'] = groq(cl_prompt, 400)
+      except Exception as e:
+          print("Cover letter error: " + str(e))
+          top5[0]['cover_letter'] = (
+              "With a 9.91 CGPA, LeetCode rating of 2413, and hands-on MLOps experience, "
+              "I deliver immediate impact. My " + CANDIDATE_SKILLS[:50] + " expertise aligns directly with this role."
+          )
+
+      Kestra.outputs(dict(
+          scored_jobs=json.dumps(top5),
+          top_title=top5[0]['title'],
+          top_score=str(top5[0].get('score',0))
+      ))
+
+  - id: store_pipeline_run
+    type: io.kestra.plugin.jdbc.postgresql.Queries
+    url: jdbc:postgresql://postgres:5432/kestra
+    username: kestra
+    password: k3str4
+    sql: |
+      INSERT INTO jh_pipeline_runs (candidate_name, candidate_email, jobs_fetched, top_job_title, top_job_score, pipeline_status)
+      VALUES (
+        '{{ inputs.candidate_name }}',
+        '{{ inputs.candidate_email }}',
+        '{{ outputs.merge_and_filter.vars.count }}'::integer,
+        '{{ outputs.score_and_coverletter.vars.top_title }}',
+        '{{ outputs.score_and_coverletter.vars.top_score }}'::integer,
+        'completed'
+      );
+
+  - id: ai_complete_log
+    type: io.kestra.plugin.core.log.Log
+    message: "🤖 AI complete. Results stored in DB. Building email..."
+
+  - id: build_html
+    type: io.kestra.plugin.scripts.python.Script
+    beforeCommands:
+      - pip install kestra --quiet
+    inputFiles:
+      scored.json: "{{ outputs.score_and_coverletter.vars.scored_jobs }}"
+      tips.json: "{{ outputs.generate_tips.vars.tips }}"
+    script: |
+      import json
+      from kestra import Kestra
+      from datetime import datetime
+
+      with open('scored.json') as f:
+          jobs = json.load(f)
+      with open('tips.json') as f:
+          tips = json.load(f)
+
+      today = datetime.now().strftime('%A, %B %d %Y')
+      rank_labels = ['#1 Best Match','#2 Strong Match','#3 Good Match','#4 Match','#5 Match']
+
+      def score_color(s):
+          return '#16a34a' if s >= 80 else '#d97706' if s >= 60 else '#dc2626'
+
+      def score_label(s):
+          return 'Excellent' if s >= 85 else 'Strong' if s >= 75 else 'Good' if s >= 60 else 'Fair'
+
+      cards = ''
+      for i, j in enumerate(jobs):
+          score = j.get('score', 0)
+          sc = score_color(score)
+          sl = score_label(score)
+          cl = j.get('cover_letter', '')
+
+          cl_block = ''
+          if cl:
+              cl_block = (
+                  '<tr><td style="padding:0 24px 20px;">'
+                  '<div style="background:#f8f7ff;border-left:3px solid #7c6fe0;padding:16px 20px;border-radius:0 8px 8px 0;">'
+                  '<p style="margin:0 0 6px;font-size:11px;font-weight:700;letter-spacing:0.08em;color:#7c6fe0;text-transform:uppercase;">AI-Drafted Cover Letter</p>'
+                  '<p style="margin:0;font-size:14px;color:#374151;line-height:1.7;font-style:italic;">' + cl + '</p>'
+                  '</div></td></tr>'
+              )
+
+          tags_html = ''
+          for tag in j.get('tags','').split(',')[:4]:
+              tag = tag.strip()
+              if tag:
+                  tags_html += '<span style="display:inline-block;background:#f3f4f6;color:#6b7280;font-size:11px;padding:3px 10px;border-radius:20px;margin:2px 3px 2px 0;">' + tag + '</span>'
+
+          cards += (
+              '<tr><td style="padding:0 20px 16px;">'
+              '<table width="100%" cellpadding="0" cellspacing="0" style="background:white;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">'
+              '<tr><td style="padding:20px 24px 0;">'
+              '<table width="100%" cellpadding="0" cellspacing="0"><tr>'
+              '<td><p style="margin:0 0 2px;font-size:11px;font-weight:700;letter-spacing:0.08em;color:#9ca3af;text-transform:uppercase;">' + rank_labels[i] + '</p>'
+              '<p style="margin:0 0 4px;font-size:17px;font-weight:700;color:#111827;line-height:1.3;">' + j.get('title','') + '</p>'
+              '<p style="margin:0;font-size:14px;color:#6b7280;">' + j.get('company','') + ' &nbsp;&#183;&nbsp; ' + j.get('source','') + '</p></td>'
+              '<td style="text-align:right;vertical-align:top;">'
+              '<div style="display:inline-block;background:' + sc + ';color:white;border-radius:8px;padding:10px 16px;text-align:center;">'
+              '<div style="font-size:22px;font-weight:800;line-height:1;">' + str(score) + '</div>'
+              '<div style="font-size:10px;font-weight:600;letter-spacing:0.05em;opacity:0.85;margin-top:2px;">' + sl.upper() + '</div>'
+              '</div></td></tr></table></td></tr>'
+              '<tr><td style="padding:12px 24px 0;">' + tags_html + '</td></tr>'
+              '<tr><td style="padding:10px 24px 16px;"><p style="margin:0;font-size:13px;color:#6b7280;line-height:1.6;">' + j.get('reason','') + '</p></td></tr>'
+              + cl_block +
+              '<tr><td style="padding:0 24px 20px;">'
+              '<a href="' + j.get('url','#') + '" style="display:inline-block;background:#7c6fe0;color:white;text-decoration:none;padding:10px 24px;border-radius:8px;font-size:14px;font-weight:600;">View Job &rarr;</a>'
+              '</td></tr>'
+              '</table></td></tr>'
+          )
+
+      tips_rows = ''
+      tip_nums = ['01','02','03']
+      for ti, tip in enumerate(tips[:3]):
+          tips_rows += (
+              '<tr><td style="padding:8px 0;border-bottom:1px solid #f3f4f6;">'
+              '<table cellpadding="0" cellspacing="0"><tr>'
+              '<td style="vertical-align:top;padding-right:12px;">'
+              '<div style="width:22px;height:22px;background:#fef3c7;border-radius:6px;text-align:center;line-height:22px;font-size:11px;font-weight:700;color:#d97706;">' + tip_nums[ti] + '</div>'
+              '</td><td style="font-size:13px;color:#374151;line-height:1.6;">' + tip + '</td>'
+              '</tr></table></td></tr>'
+          )
+
+      stats_count = str(len(jobs))
+      stats_score = str(jobs[0].get('score', 0))
+
+      html = (
+          '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">'
+          '<meta name="viewport" content="width=device-width,initial-scale=1">'
+          '<title>Your Daily Job Digest</title></head>'
+          '<body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;">'
+          '<table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:32px 16px;">'
+          '<tr><td align="center"><table width="620" cellpadding="0" cellspacing="0">'
+
+          '<tr><td style="padding-bottom:20px;">'
+          '<table width="100%" cellpadding="0" cellspacing="0"><tr>'
+          '<td><span style="font-size:18px;font-weight:800;color:#111827;letter-spacing:-0.03em;">Job<span style="color:#7c6fe0;">Hunter</span></span></td>'
+          '<td style="text-align:right;font-size:12px;color:#9ca3af;">' + today + '</td>'
+          '</tr></table></td></tr>'
+
+          '<tr><td style="background:linear-gradient(135deg,#1e1b4b 0%,#312e81 50%,#4c1d95 100%);border-radius:16px 16px 0 0;padding:36px 32px;">'
+          '<p style="margin:0 0 8px;font-size:12px;font-weight:700;letter-spacing:0.12em;color:rgba(255,255,255,0.5);text-transform:uppercase;">Daily Intelligence Report</p>'
+          '<h1 style="margin:0 0 10px;font-size:28px;font-weight:800;color:white;letter-spacing:-0.03em;line-height:1.2;">Your AI Job Digest</h1>'
+          '<p style="margin:0;font-size:15px;color:rgba(255,255,255,0.65);line-height:1.5;">Scanned 3 job boards &middot; AI-ranked against your profile &middot; Ready to apply</p>'
+          '</td></tr>'
+
+          '<tr><td style="background:#312e81;padding:0 32px 24px;">'
+          '<table width="100%" cellpadding="0" cellspacing="0"><tr>'
+          '<td style="text-align:center;background:rgba(255,255,255,0.08);border-radius:12px;padding:16px;">'
+          '<p style="margin:0;font-size:28px;font-weight:800;color:white;">' + stats_count + '</p>'
+          '<p style="margin:4px 0 0;font-size:11px;font-weight:600;letter-spacing:0.06em;color:rgba(255,255,255,0.5);text-transform:uppercase;">Top Matches</p>'
+          '</td><td style="width:12px;"></td>'
+          '<td style="text-align:center;background:rgba(255,255,255,0.08);border-radius:12px;padding:16px;">'
+          '<p style="margin:0;font-size:28px;font-weight:800;color:#a3e635;">' + stats_score + '</p>'
+          '<p style="margin:4px 0 0;font-size:11px;font-weight:600;letter-spacing:0.06em;color:rgba(255,255,255,0.5);text-transform:uppercase;">Best Score</p>'
+          '</td><td style="width:12px;"></td>'
+          '<td style="text-align:center;background:rgba(255,255,255,0.08);border-radius:12px;padding:16px;">'
+          '<p style="margin:0;font-size:28px;font-weight:800;color:#f9a8d4;">3</p>'
+          '<p style="margin:4px 0 0;font-size:11px;font-weight:600;letter-spacing:0.06em;color:rgba(255,255,255,0.5);text-transform:uppercase;">Sources</p>'
+          '</td></tr></table></td></tr>'
+
+          '<tr><td style="background:white;padding:24px 4px 8px;">'
+          '<p style="margin:0 24px 16px;font-size:12px;font-weight:700;letter-spacing:0.1em;color:#9ca3af;text-transform:uppercase;">Ranked Matches</p>'
+          '<table width="100%" cellpadding="0" cellspacing="0">' + cards + '</table>'
+          '</td></tr>'
+
+          '<tr><td style="background:white;padding:0 24px 28px;">'
+          '<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:20px 24px;">'
+          '<p style="margin:0 0 14px;font-size:12px;font-weight:700;letter-spacing:0.08em;color:#92400e;text-transform:uppercase;">Job Search Intelligence</p>'
+          '<table width="100%" cellpadding="0" cellspacing="0">' + tips_rows + '</table>'
+          '</div></td></tr>'
+
+          '<tr><td style="background:#f9fafb;border-top:1px solid #e5e7eb;border-radius:0 0 16px 16px;padding:20px 24px;text-align:center;">'
+          '<p style="margin:0 0 4px;font-size:13px;font-weight:600;color:#374151;">JobHunter &middot; Powered by Kestra + Groq</p>'
+          '<p style="margin:0;font-size:12px;color:#9ca3af;">Automated daily pipeline &middot; Results stored in PostgreSQL</p>'
+          '</td></tr>'
+
+          '</table></td></tr></table>'
+          '</body></html>'
+      )
+
+      Kestra.outputs(dict(html=html))
+
+  - id: notify_phase
+    type: io.kestra.plugin.core.flow.Parallel
+    tasks:
+      - id: send_email
+        type: io.kestra.plugin.notifications.mail.MailSend
+        from: warrior8108@gmail.com
+        to: "{{ inputs.candidate_email }}"
+        subject: "Your AI Job Digest — {{ now() | date('dd MMM yyyy') }}"
+        htmlTextContent: "{{ outputs.build_html.vars.html }}"
+        host: smtp.gmail.com
+        port: 465
+        username: warrior8108@gmail.com
+        password: pvhtnrizcfzvbwrw
+
+      - id: log_success
+        type: io.kestra.plugin.core.log.Log
+        message: "📧 Email sent to {{ inputs.candidate_email }}"
+
+  - id: pipeline_done
+    type: io.kestra.plugin.core.log.Log
+    message: "✅ Pipeline complete! Results in DB. Email sent to {{ inputs.candidate_email }}"
+
+triggers:
+  - id: daily_morning
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 9 * * 1-5"
+    timezone: Asia/Kolkata
