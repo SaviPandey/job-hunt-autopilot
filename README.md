@@ -1,65 +1,72 @@
-# Job-Hunt-Autopilot 🚀
+# Job-Hunt-Autopilot 🚀🤖
 
-A comprehensive automated job application tracking system powered by **Kestra**. This project uses Kestra workflows to track job applications via webhooks, store the data in PostgreSQL, and automate weekly follow-up reminders.
+A full-fledged, AI-powered job application automation system orchestrated entirely by **Kestra**. 
 
-## Features
+No backend required. Just pure orchestration. This project scrapes job boards every morning, uses **Groq AI** to score listings against your profile, automatically writes tailored cover letters for the best matches, logs everything into PostgreSQL, and sends you a ranked digest email. It even handles automated 7-day follow-ups!
 
-- **Webhook Tracking**: Automatically log job applications from any platform that can send webhooks.
-- **Database Storage**: Securely stores application data (Company, Role, Application Date, Status) in PostgreSQL.
-- **Instant Confirmation**: Sends beautifully formatted HTML emails immediately upon logging an application.
-- **Automated Follow-ups**: Runs a scheduled cron job every Monday to check for applications older than 7 days and sends you an email reminder with a pre-formatted follow-up template.
-- **Database Synchronization**: Automatically updates the `followup_sent` status in the database to ensure you don't follow up on the same application multiple times.
+---
 
-## Workflows Included
+## 🌟 The Automation Magic (Features)
 
-1. **`job-hunter-tracker.yml`**: 
-   - Triggered by a Webhook (`/api/v1/executions/webhook/job.hunter/job-hunter-tracker/job-application-tracker-2026`).
-   - Expects payload with `job_title`, `company`, and `url`.
+- **🕸️ Automated Job Scraping**: Pulls job listings from multiple sources automatically on a schedule.
+- **🧠 AI Scoring & Matchmaking**: Leverages the blazing-fast **Groq AI** API to score each job listing against your specific skills and experience.
+- **📝 Auto-Generated Cover Letters**: Groq AI automatically drafts a highly tailored, role-specific cover letter for the best job matches.
+- **🗄️ PostgreSQL Tracking**: Securely logs every job, score, and application status into a structured database.
+- **📧 Ranked Daily Digest**: Sends a beautifully formatted HTML email every morning with your top job matches and AI-generated insights.
+- **⏰ Automated Follow-ups**: A cron job runs every Monday, checks PostgreSQL for applications older than 7 days, and sends a follow-up reminder email template.
+- **🔄 Database Synchronization**: Automatically updates the `followup_sent` status to prevent duplicate follow-ups.
+
+---
+
+## 📂 Workflows Included
+
+1. **`job-hunter-main.yml`** (The Core Engine):
+   - Triggered on a schedule (e.g., every morning).
+   - Scrapes job data and filters listings.
+   - Passes listings to a Python script that calls the **Groq API** (Llama3) to score them against your profile.
+   - Generates actionable job search tips.
+   - Outputs a beautifully crafted HTML email digest containing the top jobs and custom cover letters.
+
+2. **`job-hunter-tracker.yml`** (The Webhook Logger): 
+   - Triggered by a Webhook when you actually apply.
    - Inserts the record into the `jh_applications` PostgreSQL table.
-   - Sends a confirmation email.
+   - Sends a confirmation email that the application was tracked.
 
-2. **`job-hunter-followup.yml`**:
+3. **`job-hunter-followup.yml`** (The Closer):
    - Triggered by a CRON Schedule (Every Monday at 10:00 AM IST).
    - Queries PostgreSQL for applications older than 7 days where a follow-up hasn't been sent.
-   - Marks those records as `followup_sent = TRUE`.
-   - Sends an email containing an actionable follow-up template.
+   - Marks those records as `followup_sent = TRUE` and sends you an email containing an actionable follow-up template.
 
-## Prerequisites
+---
 
-- **Docker & Docker Compose**: For running the local Kestra and PostgreSQL services easily.
-- **SMTP Credentials**: Gmail SMTP credentials for sending emails (update the `username` and `password` in the mail tasks).
-
-## Quick Setup
+## 🚀 Quick Setup (Zero to Hero in 2 Minutes)
 
 1. **Start the Environment**
-   Run the included Docker Compose file to instantly spin up Kestra and a PostgreSQL database configured exactly as the workflows expect:
+   Run the included Docker Compose file to instantly spin up Kestra and a PostgreSQL database perfectly configured for these workflows:
    ```bash
    docker-compose up -d
    ```
    Kestra will be available at `http://localhost:8080`.
 
-2. **Configure Email**
-   Update the SMTP credentials (`username` and `password`) in both `.yml` files to your own. If using Gmail, use an [App Password](https://myaccount.google.com/apppasswords).
+2. **Configure Your Secrets in Kestra**
+   Go to your Kestra UI (`http://localhost:8080`), navigate to **Namespaces**, and create the following secrets under the `job.hunter` namespace:
+   - `GROQ_API_KEY`: Your API key from Groq.
+   - `GMAIL_APP_PASSWORD`: Your Gmail app password for SMTP.
 
-3. **Import Workflows**
-   Open `http://localhost:8080` in your browser, go to **Flows**, and import both `job-hunter-tracker.yml` and `job-hunter-followup.yml`.
+3. **Configure Your Profile**
+   In the Kestra UI, update the inputs in `job-hunter-main.yml` with your details (Name, Skills, Target Roles, Experience).
 
-4. **Start Tracking**
-   Set up your browser extension or webhook sender to POST data to the Kestra webhook URL when you apply for a job.
+4. **Import Workflows**
+   Go to **Flows** and import `job-hunter-main.yml`, `job-hunter-tracker.yml`, and `job-hunter-followup.yml`.
 
-### Webhook Payload Example
+5. **Enable Triggers**
+   Turn on the schedules and you are officially on Autopilot! ✈️
 
-```json
-{
-  "job_title": "Senior Software Engineer",
-  "company": "Tech Innovators Inc.",
-  "url": "https://techinnovators.com/careers/123"
-}
-```
+---
 
-## Screenshots & Outputs
+## 📸 Screenshots & Architecture
 
-Here are some visuals of the workflows and execution outputs:
+Here are visuals of the workflows, architecture, and execution outputs:
 
 | Flow Graph & Topology | Execution Gantt & Email |
 | :---: | :---: |
@@ -67,6 +74,8 @@ Here are some visuals of the workflows and execution outputs:
 
 *Additional visuals: [Kestra Architecture](./Outputs/Architect_kestra.png), [Kestra Certificate](./Outputs/Certificate-Kestra.png)*
 
-## License
+---
+
+## 📜 License
 
 This project is licensed under the MIT License.
